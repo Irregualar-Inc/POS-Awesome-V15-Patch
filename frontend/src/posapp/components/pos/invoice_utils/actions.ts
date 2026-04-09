@@ -74,6 +74,21 @@ function showRemovalAuthError(context: any, message: string) {
 	});
 }
 
+function elevateDialogAbovePaymentUI(dialog: any) {
+	const wrapper = dialog?.$wrapper;
+	if (!wrapper?.css) {
+		return;
+	}
+
+	// Keep Frappe dialogs above Vuetify overlays used by payment screens.
+	wrapper.css("z-index", 3000);
+
+	const backdrop = wrapper.prev?.(".modal-backdrop");
+	if (backdrop?.css) {
+		backdrop.css("z-index", 2990);
+	}
+}
+
 function toRemovalNumber(value: any): number {
 	const numeric = Number(value);
 	return Number.isFinite(numeric) ? numeric : 0;
@@ -242,6 +257,7 @@ function requestRemovalAuthorization(context: any, item: any): Promise<any> {
 			}
 		};
 		dialog.show();
+		elevateDialogAbovePaymentUI(dialog);
 		dialog.get_field("authorization_code")?.$input?.attr?.({
 			inputmode: "numeric",
 			maxlength: 5,
@@ -311,6 +327,7 @@ function requestCancelSaleAuthorization(context: any): Promise<any> {
 			}
 		};
 		dialog.show();
+		elevateDialogAbovePaymentUI(dialog);
 		dialog.get_field("authorization_code")?.$input?.attr?.({
 			inputmode: "numeric",
 			maxlength: 5,
@@ -318,6 +335,56 @@ function requestCancelSaleAuthorization(context: any): Promise<any> {
 		});
 		dialog.get_field("authorization_code")?.$input?.focus?.();
 	});
+}
+
+export async function authorizeCancelSaleIfRequired(
+	context: any,
+	options: any = {},
+): Promise<boolean> {
+	if (options?.skipAuthorizationPrompt) {
+		return true;
+	}
+
+	if (
+		parseBooleanSetting(
+			context?.pos_profile?.posa_allow_user_remove_item_from_pos_till,
+		)
+	) {
+		return true;
+	}
+
+	let authorizationResult: any = { authorized: false };
+	const providedCode = String(options?.authorization_code || "").trim();
+
+	if (providedCode) {
+		if (!FIVE_DIGIT_CODE_REGEX.test(providedCode)) {
+			showRemovalAuthError(
+				context,
+				__("Enter a valid 5-digit authorization code."),
+			);
+			return false;
+		}
+
+		const validationResult =
+			await validateAndUseCodeFromServer(providedCode);
+		if (!validationResult?.valid) {
+			showRemovalAuthError(
+				context,
+				validationResult?.message ||
+					__("Authorization code validation failed."),
+			);
+			return false;
+		}
+
+		authorizationResult = {
+			authorized: true,
+			authorizationRecord: validationResult?.record,
+		};
+	} else {
+		authorizationResult = await requestCancelSaleAuthorization(context);
+	}
+
+	return Boolean(authorizationResult?.authorized);
 }
 
 async function shouldAuthorizeRemoval(
@@ -490,38 +557,11 @@ export async function cancel_invoice(context: any, options: any = {}) {
 		context.cancel_dialog = false;
 	}
 
-	let authorizationResult: any = { authorized: false };
-	const providedCode = String(options?.authorization_code || "").trim();
-
-	if (providedCode) {
-		if (!FIVE_DIGIT_CODE_REGEX.test(providedCode)) {
-			showRemovalAuthError(
-				context,
-				__("Enter a valid 5-digit authorization code."),
-			);
-			return false;
-		}
-
-		const validationResult =
-			await validateAndUseCodeFromServer(providedCode);
-		if (!validationResult?.valid) {
-			showRemovalAuthError(
-				context,
-				validationResult?.message ||
-					__("Authorization code validation failed."),
-			);
-			return false;
-		}
-
-		authorizationResult = {
-			authorized: true,
-			authorizationRecord: validationResult?.record,
-		};
-	} else {
-		authorizationResult = await requestCancelSaleAuthorization(context);
-	}
-
-	if (!authorizationResult?.authorized) {
+	const canCancelInvoice = await authorizeCancelSaleIfRequired(
+		context,
+		options,
+	);
+	if (!canCancelInvoice) {
 		return false;
 	}
 

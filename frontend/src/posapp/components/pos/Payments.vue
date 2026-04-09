@@ -212,7 +212,7 @@
 				:compact="dialogMode"
 				@submit="submit"
 				@submit-and-print="submit(undefined, false, true)"
-				@cancel="back_to_invoice"
+				@cancel="cancel_payment"
 			/>
 		</div>
 		<!-- Dialogs Section (Custom Days, Phone Payment) -->
@@ -256,6 +256,7 @@ import {
 	rebalancePreferredPaymentLine,
 	resolvePreferredPaymentLine,
 } from "../../utils/paymentInitialization";
+import { authorizeCancelSaleIfRequired } from "./invoice_utils/actions";
 
 // Components
 import PaymentSummary from "./payments/PaymentSummary.vue";
@@ -687,6 +688,19 @@ const back_to_invoice = () => {
 		uiStore.setActiveView("items");
 	}
 	queueSearchRefocusRecovery();
+};
+
+const cancel_payment = async () => {
+	const canExitPayments = await authorizeCancelSaleIfRequired({
+		pos_profile: pos_profile.value,
+		toastStore,
+	});
+
+	if (!canExitPayments) {
+		return;
+	}
+
+	back_to_invoice();
 };
 
 const finishSubmissionNavigation = (clearInvoice = false) => {
