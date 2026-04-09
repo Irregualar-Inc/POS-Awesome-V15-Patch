@@ -1007,7 +1007,20 @@ export default {
 		}
 	},
 	created() {
-		this.invoiceStore.clear();
+		const restoredInvoiceDoc = this.invoiceStore.invoiceDoc || null;
+		const hasRestoredSale =
+			this.invoiceStore.itemsCount > 0 ||
+			Boolean(restoredInvoiceDoc && Object.keys(restoredInvoiceDoc).length);
+
+		if (!hasRestoredSale) {
+			this.invoiceStore.clear();
+		} else {
+			const restoredCustomer = String(restoredInvoiceDoc?.customer || "").trim();
+			if (restoredCustomer) {
+				this.customersStore.setSelectedCustomer(restoredCustomer);
+				this.customer = restoredCustomer;
+			}
+		}
 		this.$watch(
 			() => this.selectedCustomer,
 			(newCustomer) => {

@@ -265,7 +265,7 @@ export function useFormat() {
 
 		const locale = getNumberLocale();
 		let formatted = number.toLocaleString(locale, {
-			minimumFractionDigits: prec,
+			minimumFractionDigits: Math.min(prec, 2),
 			maximumFractionDigits: prec,
 			useGrouping: true,
 		});
@@ -291,7 +291,7 @@ export function useFormat() {
 
 		const locale = getNumberLocale();
 		let formatted = number.toLocaleString(locale, {
-			minimumFractionDigits: prec,
+			minimumFractionDigits: 0,
 			maximumFractionDigits: prec,
 			useGrouping: true,
 		});
@@ -415,7 +415,7 @@ export default {
 			}
 			const locale = getNumberLocale();
 			let formatted = number.toLocaleString(locale, {
-				minimumFractionDigits: prec,
+				minimumFractionDigits: Math.min(prec, 2),
 				maximumFractionDigits: prec,
 				useGrouping: true,
 			});
@@ -436,7 +436,7 @@ export default {
 			}
 			const locale = getNumberLocale();
 			let formatted = number.toLocaleString(locale, {
-				minimumFractionDigits: prec,
+				minimumFractionDigits: 0,
 				maximumFractionDigits: prec,
 				useGrouping: true,
 			});

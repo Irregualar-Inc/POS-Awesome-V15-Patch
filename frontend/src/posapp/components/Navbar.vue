@@ -437,13 +437,21 @@ export default {
 					title: this.__("Clearing local cache..."),
 				});
 				let westernPref = null;
+				let activeInvoiceState = null;
+				const authGuardActive = !this.posProfile?.posa_allow_user_remove_item_from_pos_till;
 				if (typeof localStorage !== "undefined") {
 					westernPref = localStorage.getItem("use_western_numerals");
+					if (authGuardActive) {
+						activeInvoiceState = localStorage.getItem("posa_active_invoice_state");
+					}
 				}
 				await forceClearAllCache();
 				await clearAllCaches({ confirmBeforeClear: false }).catch(() => {});
 				if (westernPref !== null && typeof localStorage !== "undefined") {
 					localStorage.setItem("use_western_numerals", westernPref);
+				}
+				if (activeInvoiceState !== null && authGuardActive && typeof localStorage !== "undefined") {
+					localStorage.setItem("posa_active_invoice_state", activeInvoiceState);
 				}
 				this.toastStore.show({
 					color: "success",

@@ -21,6 +21,7 @@
 			v-if="usePaymentDialog"
 			v-model="paymentDialogOpen"
 			:retain-focus="false"
+			:persistent="!posProfile?.posa_allow_user_remove_item_from_pos_till"
 			width="96vw"
 			max-width="1480"
 			scrim="rgba(15, 23, 42, 0.55)"

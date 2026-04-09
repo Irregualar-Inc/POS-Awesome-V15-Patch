@@ -5,6 +5,7 @@
 
 import { defineStore } from "pinia";
 import { computed, ref, reactive, watch } from "vue";
+import { useUIStore } from "./uiStore";
 
 declare const frappe: any;
 declare const __: any;
@@ -14,6 +15,8 @@ import type {
 	InvoiceMetadata,
 	DeliveryCharge,
 } from "../types/models";
+
+const ACTIVE_INVOICE_STORAGE_KEY = "posa_active_invoice_state";
 
 const toNumber = (value: any): number => {
 	if (value == null) {
@@ -37,6 +40,43 @@ const toNumber = (value: any): number => {
 };
 
 const cloneItem = <T>(item: T): T => ({ ...item });
+
+const readStoredActiveInvoiceState = () => {
+	if (typeof localStorage === "undefined") {
+		return null;
+	}
+
+	try {
+		const raw = localStorage.getItem(ACTIVE_INVOICE_STORAGE_KEY);
+		if (!raw) {
+			return null;
+		}
+		const parsed = JSON.parse(raw);
+		return parsed && typeof parsed === "object" ? parsed : null;
+	} catch (error) {
+		console.warn(
+			"[invoiceStore] Failed to read persisted invoice state",
+			error,
+		);
+		return null;
+	}
+};
+
+const writeStoredActiveInvoiceState = (state: Record<string, any> | null) => {
+	if (typeof localStorage === "undefined") {
+		return;
+	}
+
+	try {
+		if (!state) {
+			localStorage.removeItem(ACTIVE_INVOICE_STORAGE_KEY);
+			return;
+		}
+		localStorage.setItem(ACTIVE_INVOICE_STORAGE_KEY, JSON.stringify(state));
+	} catch (error) {
+		console.warn("[invoiceStore] Failed to persist invoice state", error);
+	}
+};
 
 export const useInvoiceStore = defineStore("invoice", () => {
 	const invoiceDoc = ref<InvoiceDoc | null>(null);
@@ -325,6 +365,79 @@ export const useInvoiceStore = defineStore("invoice", () => {
 		touch();
 	};
 
+	const persistActiveInvoiceState = () => {
+		const uiStore = useUIStore();
+		if (uiStore.posProfile?.posa_allow_user_remove_item_from_pos_till) {
+			writeStoredActiveInvoiceState(null);
+			return;
+		}
+		const currentItems = itemOrder.value
+			.map((id) => itemsData.get(id))
+			.filter(Boolean)
+			.map((item) => cloneItem(item as CartItem));
+
+		const hasActiveInvoice =
+			currentItems.length > 0 ||
+			Boolean(invoiceDoc.value && Object.keys(invoiceDoc.value).length);
+
+		if (!hasActiveInvoice) {
+			writeStoredActiveInvoiceState(null);
+			return;
+		}
+
+		writeStoredActiveInvoiceState({
+			invoiceDoc: invoiceDoc.value ? { ...invoiceDoc.value } : null,
+			invoiceType: invoiceType.value,
+			items: currentItems,
+			packedItems: packedItems.value.map(cloneItem),
+			postingDate: postingDate.value,
+			discountAmount: discountAmount.value,
+			additionalDiscount: additionalDiscount.value,
+			additionalDiscountPercentage: additionalDiscountPercentage.value,
+			deliveryCharges: Array.isArray(deliveryCharges.value)
+				? deliveryCharges.value.map((charge) => ({ ...charge }))
+				: [],
+			deliveryChargesRate: deliveryChargesRate.value,
+			selectedDeliveryCharge: selectedDeliveryCharge.value,
+		});
+	};
+
+	const restorePersistedActiveInvoiceState = () => {
+		const stored = readStoredActiveInvoiceState();
+		if (!stored) {
+			return;
+		}
+
+		invoiceDoc.value = normalizeDoc(stored.invoiceDoc);
+		invoiceType.value =
+			typeof stored.invoiceType === "string" && stored.invoiceType
+				? stored.invoiceType
+				: "Invoice";
+		setItems(Array.isArray(stored.items) ? stored.items : []);
+		packedItems.value = Array.isArray(stored.packedItems)
+			? stored.packedItems.map(cloneItem)
+			: [];
+		postingDate.value =
+			typeof stored.postingDate === "string" && stored.postingDate
+				? stored.postingDate
+				: frappe.datetime.nowdate();
+		discountAmount.value = toNumber(stored.discountAmount);
+		additionalDiscount.value = toNumber(stored.additionalDiscount);
+		additionalDiscountPercentage.value = toNumber(
+			stored.additionalDiscountPercentage,
+		);
+		deliveryCharges.value = Array.isArray(stored.deliveryCharges)
+			? stored.deliveryCharges
+			: [];
+		deliveryChargesRate.value = toNumber(stored.deliveryChargesRate);
+		selectedDeliveryCharge.value =
+			typeof stored.selectedDeliveryCharge === "string"
+				? stored.selectedDeliveryCharge
+				: "";
+		recalculateTotals();
+		touch();
+	};
+
 	const clear = (options: { preserveStickies?: boolean } = {}) => {
 		const { preserveStickies = false } = options;
 		invoiceDoc.value = null;
@@ -340,6 +453,7 @@ export const useInvoiceStore = defineStore("invoice", () => {
 		}
 
 		touch();
+		writeStoredActiveInvoiceState(null);
 	};
 
 	// Computed property that reconstructs the array from map + order
@@ -373,6 +487,28 @@ export const useInvoiceStore = defineStore("invoice", () => {
 		},
 		{ deep: true },
 	);
+
+	watch(
+		[
+			invoiceDoc,
+			invoiceType,
+			items,
+			packedItems,
+			postingDate,
+			discountAmount,
+			additionalDiscount,
+			additionalDiscountPercentage,
+			deliveryCharges,
+			deliveryChargesRate,
+			selectedDeliveryCharge,
+		],
+		() => {
+			persistActiveInvoiceState();
+		},
+		{ deep: true },
+	);
+
+	restorePersistedActiveInvoiceState();
 
 	return {
 		invoiceDoc,
