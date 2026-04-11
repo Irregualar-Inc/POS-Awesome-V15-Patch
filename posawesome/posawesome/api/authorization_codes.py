@@ -4,7 +4,7 @@ import re
 
 import frappe
 from frappe import _
-from frappe.utils import add_to_date, now_datetime
+from frappe.utils import add_to_date, get_datetime, now_datetime, nowdate
 
 
 AUTH_CODE_REGEX = re.compile(r"^\d{5}$")
@@ -61,10 +61,6 @@ def _resolve_remover_employee(context):
 
 def _create_removal_log(auth_doc, removal_context):
     context = _parse_removal_context(removal_context)
-    existing_log = frappe.db.exists(REMOVAL_LOG_DOCTYPE, {"authorization_code": auth_doc.name})
-    if existing_log:
-        return existing_log
-
     items_state = context.get("items_state") if isinstance(context.get("items_state"), list) else []
 
     remover_employee = _resolve_remover_employee(context)
@@ -129,22 +125,43 @@ def _create_removal_log(auth_doc, removal_context):
     return log_doc.name
 
 
-def _generate_unique_active_code(max_attempts=25):
-    now = now_datetime()
+def _today_range():
+    start = get_datetime(nowdate() + " 00:00:00")
+    end = add_to_date(start, days=1, seconds=-1)
+    return start, end
+
+
+def _generate_unique_daily_code(day_start, day_end, max_attempts=25):
     for __attempt in range(max_attempts):
         code = _new_five_digit_code()
         existing = frappe.db.exists(
             AUTH_CODE_DOCTYPE,
             {
                 "authorization_code": code,
-                "is_used": 0,
-                "expires_on": [">=", now],
+                "generated_on": ["between", [day_start, day_end]],
             },
         )
         if not existing:
             return code
 
     frappe.throw(_("Unable to generate a unique authorization code. Please try again."))
+
+
+def _get_employee_code_for_today(employee):
+    day_start, day_end = _today_range()
+    name = frappe.db.get_value(
+        AUTH_CODE_DOCTYPE,
+        {
+            "employee": employee,
+            "generated_on": ["between", [day_start, day_end]],
+        },
+        "name",
+        order_by="creation desc",
+    )
+    if not name:
+        return None
+
+    return frappe.get_doc(AUTH_CODE_DOCTYPE, name)
 
 
 @frappe.whitelist()
@@ -156,9 +173,21 @@ def generate_employee_authorization_code(employee):
     if not frappe.db.exists("Employee", employee):
         frappe.throw(_("Employee {0} does not exist.").format(employee))
 
-    code = _generate_unique_active_code()
+    existing_doc = _get_employee_code_for_today(employee)
+    if existing_doc:
+        return {
+            "name": existing_doc.name,
+            "code": existing_doc.authorization_code,
+            "employee": employee,
+            "generated_on": str(existing_doc.generated_on),
+            "expires_on": str(existing_doc.expires_on) if existing_doc.expires_on else None,
+            "is_new": False,
+        }
+
+    day_start, day_end = _today_range()
+    code = _generate_unique_daily_code(day_start, day_end)
     generated_on = now_datetime()
-    expires_on = add_to_date(generated_on, minutes=10)
+    expires_on = day_end
 
     doc = frappe.get_doc(
         {
@@ -179,6 +208,7 @@ def generate_employee_authorization_code(employee):
         "employee": employee,
         "generated_on": str(generated_on),
         "expires_on": str(expires_on),
+        "is_new": True,
     }
 
 
@@ -192,23 +222,24 @@ def validate_and_use_authorization_code(code):
         return {"valid": False, "message": _("Authorization code must be a 5-digit number.")}
 
     now = now_datetime()
+    day_start, day_end = _today_range()
     name = frappe.db.get_value(
         AUTH_CODE_DOCTYPE,
-        {"authorization_code": code},
+        {
+            "authorization_code": code,
+            "generated_on": ["between", [day_start, day_end]],
+        },
         "name",
         order_by="creation desc",
     )
 
     if not name:
-        return {"valid": False, "message": _("Authorization code was not generated.")}
+        return {"valid": False, "message": _("Authorization code was not generated for today.")}
 
     doc = frappe.get_doc(AUTH_CODE_DOCTYPE, name)
 
-    if doc.is_used:
-        return {"valid": False, "message": _("Authorization code has already been used.")}
-
     if not doc.expires_on or doc.expires_on < now:
-        return {"valid": False, "message": _("Authorization code has expired.")}
+        return {"valid": False, "message": _("Authorization code has expired for today.")}
 
     doc.is_used = 1
     doc.used_on = now
@@ -233,8 +264,6 @@ def log_authorized_item_removal(authorization_record, removal_context=None):
         return {"success": False, "message": _("Authorization record was not found.")}
 
     auth_doc = frappe.get_doc(AUTH_CODE_DOCTYPE, authorization_record)
-    if not auth_doc.is_used:
-        return {"success": False, "message": _("Authorization code is not marked as used.")}
 
     log_name = _create_removal_log(auth_doc, removal_context)
 
