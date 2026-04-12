@@ -1,6 +1,6 @@
 <template>
 	<v-row dense>
-		<v-col cols="12" sm="6" v-if="showTillRemovalActions">
+		<v-col cols="12" sm="6">
 			<v-btn
 				block
 				color="accent"
