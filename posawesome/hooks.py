@@ -78,6 +78,7 @@ after_migrate = [
     "posawesome.install.ensure_posa_manager_role",
     "posawesome.patches.add_pos_cash_movement_settings.execute",
     "posawesome.patches.add_cash_movement_to_workspace.execute",
+    "posawesome.patches.add_default_items_display_setting.execute",
     "posawesome.patches.add_customer_display_settings.execute",
     "posawesome.patches.add_dashboard_settings.execute",
     "posawesome.patches.add_dashboard_global_settings.execute",

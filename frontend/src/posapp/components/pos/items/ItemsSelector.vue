@@ -315,6 +315,7 @@ const qty = ref(1);
 const search_input = ref("");
 const first_search = ref("");
 const items_view = ref("list");
+const shouldSkipItemsViewPersist = ref(false);
 const itemsPerPage = ref(50);
 const clearingSearch = ref(false);
 const isDragging = ref(false);
@@ -364,6 +365,47 @@ const headerProps = reactive({
 
 // 3. Computed Properties
 const pos_profile = computed(() => (itemsIntegration.posProfile.value || {}) as any);
+const normalizeItemsView = (value: unknown): "list" | "card" | null => {
+	const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+	if (normalized === "list" || normalized === "card") {
+		return normalized;
+	}
+	return null;
+};
+const resolveDefaultItemsView = (profile: any): "list" | "card" => {
+	const explicitMode = normalizeItemsView(profile?.posa_default_items_display);
+	if (explicitMode) {
+		return explicitMode;
+	}
+	return parseBooleanSetting(profile?.posa_default_card_view) ? "card" : "list";
+};
+const applyProfileDefaultItemsView = (profile: any) => {
+	const nextMode = resolveDefaultItemsView(profile);
+	if (items_view.value === nextMode) {
+		return;
+	}
+	shouldSkipItemsViewPersist.value = true;
+	items_view.value = nextMode;
+};
+const saveItemsViewToPosProfile = async (mode: "list" | "card") => {
+	const profileName = pos_profile.value?.name;
+	if (!profileName || props.context !== "pos") {
+		return;
+	}
+	const profileValue = mode === "card" ? "Card" : "List";
+	try {
+		await (window as any).frappe.db.set_value(
+			"POS Profile",
+			profileName,
+			"posa_default_items_display",
+			profileValue,
+		);
+		pos_profile.value.posa_default_items_display = profileValue;
+		pos_profile.value.posa_default_card_view = mode === "card" ? 1 : 0;
+	} catch (error) {
+		console.error("Failed to save default items display mode", error);
+	}
+};
 const usesLimitSearch = computed(() =>
 	parseBooleanSetting(
 		pos_profile.value?.posa_use_limit_search ?? pos_profile.value?.pose_use_limit_search,
@@ -902,6 +944,10 @@ onMounted(async () => {
 	watch(
 		uiPosProfile,
 		async (newProfile) => {
+			if (newProfile && newProfile.name) {
+				applyProfileDefaultItemsView(newProfile);
+			}
+
 			if (newProfile && newProfile.name && !isInitialized.value) {
 				// Safety timeout to prevent infinite loading if memoryInit or store init hangs
 				if (initTimeout.value) clearTimeout(initTimeout.value);
@@ -999,6 +1045,18 @@ watch(activeView, (view) => {
 	if (view === "items") {
 		requestItemSearchFocus();
 	}
+});
+
+watch(items_view, (nextMode) => {
+	if (shouldSkipItemsViewPersist.value) {
+		shouldSkipItemsViewPersist.value = false;
+		return;
+	}
+	const normalizedMode = normalizeItemsView(nextMode);
+	if (!normalizedMode) {
+		return;
+	}
+	saveItemsViewToPosProfile(normalizedMode);
 });
 
 watch(selectedCustomer, () => {

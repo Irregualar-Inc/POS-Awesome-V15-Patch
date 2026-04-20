@@ -105,6 +105,7 @@ ORDERED_CHAIN = [
     "posa_display_items_in_stock",
     "posa_display_item_code",
     "posa_default_card_view",
+    "posa_default_items_display",
     "posa_enable_camera_scanning",
     "posa_camera_scan_type",
     "posa_show_template_items",
