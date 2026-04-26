@@ -94,28 +94,36 @@ function toRemovalNumber(value: any): number {
 	return Number.isFinite(numeric) ? numeric : 0;
 }
 
-function buildRemovalAuditContext(context: any, item: any, removalReason = "") {
+function buildRemovalAuditContext(
+	context: any,
+	removedItems: any[] | null | undefined,
+	removalReason = "",
+) {
 	const invoiceDoc = get_invoice_doc(context) || {};
-	const invoiceItems = get_invoice_items(context) || [];
+	const normalizedRemovedItems = (
+		Array.isArray(removedItems) ? removedItems : [removedItems]
+	).filter(Boolean);
+	const primaryItem = normalizedRemovedItems[0] || {};
 
 	return {
 		pos_profile:
 			context?.pos_profile?.name || invoiceDoc?.pos_profile || "",
 		invoice_name: invoiceDoc?.name || "",
 		company: invoiceDoc?.company || context?.company?.name || "",
-		warehouse: invoiceDoc?.set_warehouse || item?.warehouse || "",
+		warehouse: invoiceDoc?.set_warehouse || primaryItem?.warehouse || "",
 		customer: invoiceDoc?.customer || context?.customer || "",
 		currency: invoiceDoc?.currency || context?.pos_profile?.currency || "",
 		removal_reason: String(removalReason || "").trim(),
 		remover_employee: context?.pos_opening_shift?.employee || "",
 		removed_item: {
-			item_code: item?.item_code || "",
-			item_name: item?.item_name || "",
-			qty: toRemovalNumber(item?.qty),
-			rate: toRemovalNumber(item?.rate),
-			amount: toRemovalNumber(item?.amount),
+			item_code: primaryItem?.item_code || "",
+			item_name: primaryItem?.item_name || "",
+			qty: toRemovalNumber(primaryItem?.qty),
+			rate: toRemovalNumber(primaryItem?.rate),
+			amount: toRemovalNumber(primaryItem?.amount),
 		},
-		items_state: invoiceItems.map((line: any) => ({
+		removed_items_count: normalizedRemovedItems.length,
+		items_state: normalizedRemovedItems.map((line: any) => ({
 			item_code: line?.item_code || "",
 			item_name: line?.item_name || "",
 			qty: toRemovalNumber(line?.qty),
@@ -218,7 +226,7 @@ function requestRemovalAuthorization(context: any, item: any): Promise<any> {
 				).trim();
 				const removalContext = buildRemovalAuditContext(
 					context,
-					item,
+					[item],
 					removalReason,
 				);
 
@@ -337,12 +345,12 @@ function requestCancelSaleAuthorization(context: any): Promise<any> {
 	});
 }
 
-export async function authorizeCancelSaleIfRequired(
+async function getCancelSaleAuthorizationResult(
 	context: any,
 	options: any = {},
-): Promise<boolean> {
+): Promise<any> {
 	if (options?.skipAuthorizationPrompt) {
-		return true;
+		return { authorized: true };
 	}
 
 	if (
@@ -350,10 +358,9 @@ export async function authorizeCancelSaleIfRequired(
 			context?.pos_profile?.posa_allow_user_remove_item_from_pos_till,
 		)
 	) {
-		return true;
+		return { authorized: true };
 	}
 
-	let authorizationResult: any = { authorized: false };
 	const providedCode = String(options?.authorization_code || "").trim();
 
 	if (providedCode) {
@@ -362,7 +369,7 @@ export async function authorizeCancelSaleIfRequired(
 				context,
 				__("Enter a valid 5-digit authorization code."),
 			);
-			return false;
+			return { authorized: false };
 		}
 
 		const validationResult =
@@ -373,17 +380,26 @@ export async function authorizeCancelSaleIfRequired(
 				validationResult?.message ||
 					__("Authorization code validation failed."),
 			);
-			return false;
+			return { authorized: false };
 		}
 
-		authorizationResult = {
+		return {
 			authorized: true,
 			authorizationRecord: validationResult?.record,
 		};
-	} else {
-		authorizationResult = await requestCancelSaleAuthorization(context);
 	}
 
+	return requestCancelSaleAuthorization(context);
+}
+
+export async function authorizeCancelSaleIfRequired(
+	context: any,
+	options: any = {},
+): Promise<boolean> {
+	const authorizationResult = await getCancelSaleAuthorizationResult(
+		context,
+		options,
+	);
 	return Boolean(authorizationResult?.authorized);
 }
 
@@ -392,16 +408,41 @@ async function shouldAuthorizeRemoval(
 	item: any,
 	options: any = {},
 ) {
+	const batchToken = options?.batchRemovalToken;
+	if (batchToken?.checked) {
+		return {
+			authorized: Boolean(batchToken.authorized),
+			...batchToken.authorizationResult,
+		};
+	}
+
 	if (options?.skipAuthorizationPrompt) return { authorized: true };
 	if (
 		parseBooleanSetting(
 			context?.pos_profile?.posa_allow_user_remove_item_from_pos_till,
 		)
 	) {
+		if (batchToken) {
+			batchToken.checked = true;
+			batchToken.authorized = true;
+			batchToken.authorizationResult = { authorized: true };
+		}
 		return { authorized: true };
 	}
 
-	return requestRemovalAuthorization(context, item);
+	const authorizationResult = await requestRemovalAuthorization(
+		context,
+		item,
+	);
+	if (batchToken) {
+		batchToken.checked = true;
+		batchToken.authorized = Boolean(authorizationResult?.authorized);
+		batchToken.authorizationResult = authorizationResult || {
+			authorized: false,
+		};
+	}
+
+	return authorizationResult;
 }
 
 function getItemAdditionApi() {
@@ -411,16 +452,7 @@ function getItemAdditionApi() {
 	return itemAdditionApi;
 }
 
-export async function remove_item(context: any, item: any, options: any = {}) {
-	const authorizationResult = await shouldAuthorizeRemoval(
-		context,
-		item,
-		options,
-	);
-	if (!authorizationResult?.authorized) {
-		return false;
-	}
-
+function removeItemFromTill(context: any, item: any) {
 	const matchItem = (line: any) =>
 		line === item ||
 		(line?.posa_row_id &&
@@ -448,28 +480,100 @@ export async function remove_item(context: any, item: any, options: any = {}) {
 		return true;
 	};
 
-	// Remove immediately from live list to avoid UI stale rows.
 	removeFromContextItems();
 
 	const { removeItem } = getItemAdditionApi();
 	removeItem(item, context);
-	// Fallback: attempt once more if a stale row still exists.
+
 	removeFromContextItems();
+}
 
-	if (authorizationResult?.authorizationRecord) {
-		const logResult = await logAuthorizedRemovalFromServer(
-			authorizationResult.authorizationRecord,
-			authorizationResult.removalContext,
+async function logRemovalAuditIfAuthorized(
+	context: any,
+	authorizationResult: any,
+	removalContext: any,
+) {
+	if (!authorizationResult?.authorizationRecord) return;
+
+	const logResult = await logAuthorizedRemovalFromServer(
+		authorizationResult.authorizationRecord,
+		removalContext,
+	);
+
+	if (!logResult?.success) {
+		showRemovalAuthError(
+			context,
+			logResult?.message ||
+				__("Removal completed, but audit log creation failed."),
 		);
-
-		if (!logResult?.success) {
-			showRemovalAuthError(
-				context,
-				logResult?.message ||
-					__("Removal completed, but audit log creation failed."),
-			);
-		}
 	}
+}
+
+export async function remove_item(context: any, item: any, options: any = {}) {
+	const authorizationResult = await shouldAuthorizeRemoval(
+		context,
+		item,
+		options,
+	);
+	if (!authorizationResult?.authorized) {
+		return false;
+	}
+
+	removeItemFromTill(context, item);
+
+	const removalContext =
+		authorizationResult?.removalContext ||
+		buildRemovalAuditContext(context, [item], options?.removalReason || "");
+	await logRemovalAuditIfAuthorized(
+		context,
+		authorizationResult,
+		removalContext,
+	);
+
+	if (context.schedulePricingRuleApplication) {
+		context.schedulePricingRuleApplication();
+	}
+	applyReturnDiscountProration(context);
+	return true;
+}
+
+export async function remove_items(
+	context: any,
+	items: any[],
+	options: any = {},
+) {
+	const normalizedItems = (Array.isArray(items) ? items : []).filter(Boolean);
+	if (!normalizedItems.length) {
+		return true;
+	}
+
+	const authorizationResult = await shouldAuthorizeRemoval(
+		context,
+		normalizedItems[0],
+		options,
+	);
+	if (!authorizationResult?.authorized) {
+		return false;
+	}
+
+	for (const item of normalizedItems) {
+		removeItemFromTill(context, item);
+	}
+
+	const removalReason =
+		authorizationResult?.removalContext?.removal_reason ||
+		options?.removalReason ||
+		"";
+	const removalContext = buildRemovalAuditContext(
+		context,
+		normalizedItems,
+		removalReason,
+	);
+	await logRemovalAuditIfAuthorized(
+		context,
+		authorizationResult,
+		removalContext,
+	);
 
 	if (context.schedulePricingRuleApplication) {
 		context.schedulePricingRuleApplication();
@@ -547,21 +651,55 @@ export function get_new_item(context: any, item: any) {
 	return getNewItem(item, context);
 }
 
-export function clear_invoice(context: any, options: any = {}) {
+export async function clear_invoice(context: any, options: any = {}) {
+	const removedItems = [...(get_invoice_items(context) || [])];
+	const hasItems = Boolean(removedItems.length);
+	const shouldRequireAuthorization =
+		hasItems &&
+		!options?.skipAuthorizationPrompt &&
+		!options?.preserveStickies;
+	let authorizationResult: any = { authorized: true };
+
+	if (shouldRequireAuthorization) {
+		authorizationResult = await getCancelSaleAuthorizationResult(
+			context,
+			options,
+		);
+		if (!authorizationResult?.authorized) {
+			return false;
+		}
+	}
+
 	const { clearInvoice } = getItemAdditionApi();
-	return clearInvoice(context, options);
+	clearInvoice(context, options);
+
+	if (removedItems.length) {
+		const removalContext = buildRemovalAuditContext(
+			context,
+			removedItems,
+			options?.removalReason || "",
+		);
+		await logRemovalAuditIfAuthorized(
+			context,
+			authorizationResult,
+			removalContext,
+		);
+	}
+
+	return true;
 }
 
 export async function cancel_invoice(context: any, options: any = {}) {
 	if (context) {
 		context.cancel_dialog = false;
 	}
+	const removedItems = [...(get_invoice_items(context) || [])];
 
-	const canCancelInvoice = await authorizeCancelSaleIfRequired(
+	const authorizationResult = await getCancelSaleAuthorizationResult(
 		context,
 		options,
 	);
-	if (!canCancelInvoice) {
+	if (!authorizationResult?.authorized) {
 		return false;
 	}
 
@@ -591,6 +729,19 @@ export async function cancel_invoice(context: any, options: any = {}) {
 
 	// Use the clear_invoice logic
 	clearInvoice(context);
+
+	if (removedItems.length) {
+		const removalContext = buildRemovalAuditContext(
+			context,
+			removedItems,
+			options?.removalReason || "",
+		);
+		await logRemovalAuditIfAuthorized(
+			context,
+			authorizationResult,
+			removalContext,
+		);
+	}
 
 	context.customer = context.pos_profile?.customer || "";
 	if (context.customersStore?.setSelectedCustomer) {

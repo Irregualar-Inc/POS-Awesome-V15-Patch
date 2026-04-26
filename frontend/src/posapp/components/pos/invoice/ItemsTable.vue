@@ -9,7 +9,27 @@
 		@dragenter="onDragEnterFromSelector"
 		@dragleave="onDragLeaveFromSelector"
 	>
+		<transition name="posa-slide-down">
+			<div v-if="selectedItemIds.length > 0" class="posa-selection-bar">
+				<span class="posa-selection-bar__count text-caption">
+					{{ selectedItemIds.length }} {{ __('selected') }}
+				</span>
+				<v-btn
+					size="small"
+					color="error"
+					variant="tonal"
+					prepend-icon="mdi-delete-sweep"
+					:loading="isDeletingSelected"
+					@click="deleteSelected"
+				>
+					{{ __('Delete Selected') }}
+				</v-btn>
+				<v-btn size="small" variant="text" @click="selectedItemIds = []">{{ __('Clear') }}</v-btn>
+			</div>
+		</transition>
 		<v-data-table-virtual
+			v-model="selectedItemIds"
+			show-select
 			:headers="responsiveHeaders"
 			:items="items"
 			:expanded="expanded"
@@ -59,6 +79,8 @@
 					:showDiscountPercent="isColumnVisible('discount_percentage')"
 					:showDiscountAmount="isColumnVisible('discount_amount')"
 					:showOffer="isColumnVisible('posa_is_offer')"
+					:isSelected="isRowSelected(item.posa_row_id)"
+					:onToggleSelect="(value) => setRowSelected(item.posa_row_id, value)"
 					@update-qty="handleQtyUpdate"
 					@minus-click="handleMinusClick"
 					@add-one="addOne"
@@ -167,7 +189,8 @@ interface Props {
 	setSerialNo: (_item: any) => void;
 	setBatchQty: (_item: any, _event: any) => void;
 	validateDueDate: (_item: any) => void;
-	removeItem: (_item: any) => void;
+	removeItem: (_item: any, _options?: any) => Promise<boolean> | boolean;
+	removeItems?: (_items: any[], _options?: any) => Promise<boolean> | boolean;
 	subtractOne: (_item: any) => void;
 	addOne: (_item: any) => void;
 	isReturnInvoice?: boolean;
@@ -192,6 +215,8 @@ const { proxy } = getCurrentInstance() as any;
 const eventBus = proxy?.eventBus;
 const invoiceStore = useInvoiceStore();
 const tableContainer = ref<HTMLElement | null>(null);
+const selectedItemIds = ref<any[]>([]);
+const isDeletingSelected = ref(false);
 
 // Composables
 const { customItemFilter } = useItemsTableSearch();
@@ -212,6 +237,53 @@ const nameEdit = useItemsTableNameEdit();
 // Computed
 const items = computed(() => invoiceStore.items);
 const invoice_doc = computed(() => invoiceStore.invoiceDoc || {});
+
+const selectedItems = computed(() =>
+	(items.value || []).filter((item: any) => selectedItemIds.value.includes(item.posa_row_id)),
+);
+
+const isRowSelected = (rowId: any) => selectedItemIds.value.includes(rowId);
+
+const setRowSelected = (rowId: any, selected: boolean | null) => {
+	if (rowId == null) return;
+	const shouldSelect = !!selected;
+	const selectedSet = new Set(selectedItemIds.value);
+	if (shouldSelect) {
+		selectedSet.add(rowId);
+	} else {
+		selectedSet.delete(rowId);
+	}
+	selectedItemIds.value = Array.from(selectedSet);
+};
+
+const deleteSelected = async () => {
+	if (!selectedItemIds.value.length || isDeletingSelected.value) return;
+	const toDelete = [...selectedItems.value];
+	isDeletingSelected.value = true;
+	try {
+		if (props.removeItems) {
+			const removed = await props.removeItems(toDelete);
+			if (removed) {
+				selectedItemIds.value = [];
+			}
+			return;
+		}
+
+		const removedIds = new Set<any>();
+		for (const item of toDelete) {
+			const removed = await props.removeItem(item);
+			if (!removed) break;
+			removedIds.add(item.posa_row_id);
+		}
+
+		selectedItemIds.value = toDelete
+			.filter((item: any) => !removedIds.has(item.posa_row_id))
+			.map((item: any) => item.posa_row_id);
+	} finally {
+		isDeletingSelected.value = false;
+	}
+};
+
 const hasItemSearch = computed(() => !!props.itemSearch?.trim());
 const emptyStateIcon = computed(() => (hasItemSearch.value ? "mdi-cart-search" : "mdi-cart-outline"));
 const emptyStateTitle = computed(() =>
@@ -265,6 +337,11 @@ const hide_qty_decimals = computed(() => {
 // Watchers
 watch(() => props.displayCurrency, clearFormatCache);
 watch(() => props.pos_profile, clearFormatCache, { deep: true });
+watch(items, (newItems) => {
+	if (!selectedItemIds.value.length) return;
+	const rowIds = new Set((newItems || []).map((i: any) => i.posa_row_id));
+	selectedItemIds.value = selectedItemIds.value.filter((id) => rowIds.has(id));
+});
 
 // Methods
 const getSerialOptions = (item: any) => {
@@ -381,5 +458,32 @@ defineExpose({
 .posa-items-table-container {
 	position: relative;
 	transition: all 0.3s ease;
+}
+
+.posa-selection-bar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 12px;
+	background: rgba(var(--v-theme-error), 0.06);
+	border-bottom: 1px solid rgba(var(--v-theme-error), 0.15);
+}
+
+.posa-selection-bar__count {
+	flex: 1;
+	font-weight: 500;
+}
+
+.posa-slide-down-enter-active,
+.posa-slide-down-leave-active {
+	transition: max-height 0.2s ease, opacity 0.2s ease;
+	max-height: 48px;
+	overflow: hidden;
+}
+
+.posa-slide-down-enter-from,
+.posa-slide-down-leave-to {
+	max-height: 0;
+	opacity: 0;
 }
 </style>

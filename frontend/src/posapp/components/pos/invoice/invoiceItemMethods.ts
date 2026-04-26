@@ -21,6 +21,7 @@ interface InvoiceItemMethodsVm {
 	flushBackgroundUpdates?: () => void;
 	add_item: (_item: unknown, _options?: unknown) => unknown;
 	remove_item: (_item: unknown, _options?: unknown) => unknown;
+	remove_items: (_items: unknown[], _options?: unknown) => unknown;
 	set_batch_qty: (
 		_item: unknown,
 		_value: unknown,
@@ -202,6 +203,9 @@ const invoiceItemMethods: Record<string, unknown> &
 	// Actions
 	remove_item(item, options) {
 		return Actions.remove_item(this, item, options);
+	},
+	remove_items(items, options) {
+		return Actions.remove_items(this, items, options);
 	},
 	add_item(item, options) {
 		return Actions.add_item(this, item, options);
@@ -394,6 +398,9 @@ const invoiceItemMethods: Record<string, unknown> &
 	},
 	removeItem(item, options) {
 		return this.remove_item(item, options);
+	},
+	removeItems(items, options) {
+		return this.remove_items(items, options);
 	},
 	setBatchQty(item, value, update) {
 		return this.set_batch_qty(item, value, update);

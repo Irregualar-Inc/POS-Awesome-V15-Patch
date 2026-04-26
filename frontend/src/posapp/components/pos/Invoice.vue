@@ -182,6 +182,7 @@
 								:setBatchQty="set_batch_qty"
 								:validateDueDate="validate_due_date"
 								:removeItem="remove_item"
+								:removeItems="remove_items"
 								:subtractOne="subtract_one"
 								:addOne="add_one"
 								:toggleOffer="toggleOffer"

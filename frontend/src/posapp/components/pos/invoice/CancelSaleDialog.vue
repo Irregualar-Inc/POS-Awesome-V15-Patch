@@ -12,18 +12,6 @@
 			<v-card-text>
 				This would cancel and delete the current sale. To save it as Draft, click the "Save and Clear"
 				instead.
-				<v-text-field
-					v-model="authorizationCode"
-					class="mt-4"
-					variant="outlined"
-					density="compact"
-					:label="__('Authorization Code')"
-					:placeholder="__('Enter 5-digit code')"
-					hide-details="auto"
-					maxlength="5"
-					autocomplete="off"
-					inputmode="numeric"
-				/>
 			</v-card-text>
 			<v-card-actions>
 				<v-spacer></v-spacer>
@@ -49,18 +37,16 @@ const props = defineProps({
 
 const emit = defineEmits(["update:modelValue", "confirm"]);
 const confirmBtn = ref(null);
-const authorizationCode = ref("");
-const __ = window.__ || ((text) => text);
+const __ = globalThis.__ || ((text) => text);
 
 function onConfirm() {
-	emit("confirm", { authorization_code: authorizationCode.value });
+	emit("confirm");
 }
 
 watch(
 	() => props.modelValue,
 	(val) => {
 		if (val) {
-			authorizationCode.value = "";
 			nextTick(() => {
 				setTimeout(() => {
 					confirmBtn.value?.$el?.focus();

@@ -1,5 +1,16 @@
 <template>
 	<tr class="posa-cart-item-row" v-memo="memoDeps">
+		<!-- Select Column -->
+		<td class="posa-cart-item-row__select-cell" @click.stop data-column-key="select">
+			<v-checkbox-btn
+				:model-value="isSelected"
+				@update:model-value="(value) => onToggleSelect && onToggleSelect(value)"
+				color="primary"
+				density="compact"
+				hide-details
+			/>
+		</td>
+
 		<!-- Item Name Column -->
 		<td class="text-start" :data-column-key="'item_name'">
 			<div class="d-flex align-center">
@@ -378,6 +389,15 @@ const props = defineProps({
 	showDiscountPercent: Boolean,
 	showDiscountAmount: Boolean,
 	showOffer: Boolean,
+	// Row selection
+	isSelected: {
+		type: Boolean,
+		default: false,
+	},
+	onToggleSelect: {
+		type: Function,
+		default: null,
+	},
 });
 
 const emit = defineEmits([
@@ -427,6 +447,7 @@ const memoDeps = computed(() => {
 		props.item.posa_offer_applied,
 		props.item.is_free_item,
 		props.item.price_list_rate,
+		props.isSelected,
 		// Include edit states to ensure UI updates when switching modes
 		isEditingQty.value,
 		isEditingRate.value,
@@ -629,6 +650,13 @@ function closeDiscountAmountEdit() {
 
 <style scoped>
 /* Local styles specific to the row only */
+.posa-cart-item-row__select-cell {
+	width: 40px;
+	min-width: 40px;
+	padding: 0 4px !important;
+	text-align: center;
+}
+
 .currency-display {
 	display: flex;
 	align-items: center;
