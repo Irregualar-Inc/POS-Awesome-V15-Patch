@@ -1,5 +1,6 @@
 import stockCoordinator from "./stockCoordinator";
 import { bus } from "../bus";
+import { updateLocalStockCache } from "../../offline/stock";
 
 export interface RealtimeStockItem {
 	item_code: string;
@@ -116,6 +117,16 @@ export function dispatchRealtimeStockPayload(
 
 	if (baseEntries.length) {
 		updateBaseQuantities(baseEntries, { source: "realtime" });
+		// Also persist into IndexedDB so the value survives a page reload and
+		// the cashier doesn't have to use Navbar -> Clear Cache to see the
+		// new qty. Without this, offline/stock.ts retains the stale value
+		// indefinitely (initializeStockCache only fetches items NOT already
+		// in cache).
+		try {
+			updateLocalStockCache(baseEntries);
+		} catch (e) {
+			console.warn("Failed to persist realtime stock into IndexedDB", e);
+		}
 	}
 
 	if (deps.setLastStockAdjustment) {

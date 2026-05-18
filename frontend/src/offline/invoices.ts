@@ -19,6 +19,53 @@ const asBoolean = (value: any): boolean => {
 // Flag to avoid concurrent invoice syncs which can cause duplicate submissions
 let invoiceSyncInProgress = false;
 
+// Network-error detection so we can keep the offline entry for retry instead
+// of silently downgrading the invoice to Draft (which loses payment context).
+function isNetworkError(error: any): boolean {
+	if (!error) return false;
+	if (error instanceof TypeError) return true;
+	if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
+	const status = error?.statusCode ?? error?.status ?? error?.xhr?.status;
+	if (status === 0 || status === 502 || status === 503 || status === 504) return true;
+	const msg = String(error?.message || error?.statusText || error || "").toLowerCase();
+	return (
+		msg.includes("networkerror") ||
+		msg.includes("network error") ||
+		msg.includes("failed to fetch") ||
+		msg.includes("timeout") ||
+		msg.includes("timed out") ||
+		msg.includes("connection") ||
+		msg.includes("offline")
+	);
+}
+
+// Sidecar log of invoices that fell through to the Draft fallback. The original
+// {invoice, data, error} payload is retained so an operator can manually
+// re-apply credit/write-off/cashback info after the sync window.
+export function appendSyncRecoveryLog(entry: AnyRecord) {
+	const log = Array.isArray(memory.posa_sync_recovery_log)
+		? memory.posa_sync_recovery_log
+		: [];
+	try {
+		log.push(JSON.parse(JSON.stringify(entry)));
+	} catch (e) {
+		log.push({ error: "failed-to-serialize", note: String(e) });
+	}
+	memory.posa_sync_recovery_log = log;
+	persist("posa_sync_recovery_log");
+}
+
+export function getSyncRecoveryLog() {
+	return Array.isArray(memory.posa_sync_recovery_log)
+		? memory.posa_sync_recovery_log
+		: [];
+}
+
+export function clearSyncRecoveryLog() {
+	memory.posa_sync_recovery_log = [];
+	persist("posa_sync_recovery_log");
+}
+
 // Validate stock for offline invoice
 export function validateStockForOfflineInvoice(items: AnyRecord[]) {
 	const openingStorage = memory.pos_opening_storage || {};
@@ -219,25 +266,66 @@ export async function syncOfflineInvoices() {
 				});
 				synced++;
 			} catch (error) {
+				// Network/transport errors are retryable. Keep the entry in
+				// the queue (with its full {invoice, data}) so payment context
+				// survives until the next sync attempt.
+				if (isNetworkError(error)) {
+					console.warn(
+						"Network error during invoice sync, will retry next cycle",
+						error,
+					);
+					failures.push(inv);
+					continue;
+				}
+
+				// Permanent (validation) error: fall back to Draft so the
+				// invoice still lands on the server, but merge inv.data into
+				// the payload so payments/credit/write-off info isn't dropped.
 				console.error(
-					"Failed to submit invoice, saving as draft",
+					"Submit failed (non-network); saving as Draft with merged payload",
 					error,
 				);
 				try {
+					const mergedPayload = {
+						...(inv.invoice || {}),
+						...(inv.data || {}),
+					};
 					await frappe.call({
 						method: "posawesome.posawesome.api.invoices.update_invoice",
-						args: { data: inv.invoice },
+						args: { data: JSON.stringify(mergedPayload) },
 					});
 					drafted += 1;
+					// Retain the original payload + error for manual recovery,
+					// since update_invoice doesn't apply credit-redemption /
+					// write-off / cashback the way submit_invoice does.
+					appendSyncRecoveryLog({
+						timestamp: new Date().toISOString(),
+						reason: "submit_failed_drafted",
+						error: String((error as any)?.message || error),
+						invoice: inv.invoice,
+						data: inv.data,
+					});
 				} catch (draftErr) {
 					console.error("Failed to save invoice as draft", draftErr);
 					failures.push(inv);
+					appendSyncRecoveryLog({
+						timestamp: new Date().toISOString(),
+						reason: "submit_and_draft_failed",
+						submit_error: String((error as any)?.message || error),
+						draft_error: String(
+							(draftErr as any)?.message || draftErr,
+						),
+						invoice: inv.invoice,
+						data: inv.data,
+					});
 				}
 			}
 		}
 
-		// Reset saved invoices and totals after successful sync
-		if (synced > 0) {
+		// Only reset the full offline state (customers, payments, totals) when
+		// every invoice synced cleanly. Otherwise the customer/payment context
+		// for still-pending entries would be wiped.
+		if (synced > 0 && failures.length === 0 && drafted === 0) {
 			resetOfflineState();
 		}
 

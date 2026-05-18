@@ -143,6 +143,23 @@ def get_bin_qty(warehouse: Optional[str], item_codes: Sequence[str], ttl: Option
     return cached(warehouse, tuple(item_codes))
 
 
+def invalidate_bin_cache():
+    """Evict every cached Bin lookup across all TTL buckets.
+
+    Called from stock_realtime._flush_stock_change_queue after a Bin change
+    commits, so the next read picks up the fresh value instead of waiting
+    for posa_server_cache_duration to expire.
+    """
+    for cached_fn in _bin_cache.values():
+        clear = getattr(cached_fn, "clear_cache", None)
+        if callable(clear):
+            try:
+                clear()
+            except Exception:
+                # Cache eviction must never block the stock-change event.
+                frappe.logger().exception("Failed to clear _bin_cache entry")
+
+
 def _fetch_item_meta(item_codes: Tuple[str, ...]):
     """Return Item metadata required for batch/serial checks."""
 

@@ -10,10 +10,28 @@ declare const frappe: any;
 async function cachePrintTemplateAndTerms(profile: any) {
 	if (!profile || typeof frappe === "undefined" || !navigator.onLine) return;
 
+	// Fetch the configured Print Format's raw HTML/Jinja so the offline
+	// renderer at offline_print_template.ts can use the real template instead
+	// of falling back to the hardcoded 80mm thermal receipt.
 	try {
-		setPrintTemplate("");
+		const printFormatName =
+			profile.print_format_for_online || profile.print_format;
+		if (printFormatName) {
+			const pf = await frappe.call({
+				method: "frappe.client.get_value",
+				args: {
+					doctype: "Print Format",
+					fieldname: ["html", "print_format_type"],
+					filters: { name: printFormatName },
+				},
+			});
+			const html = pf?.message?.html;
+			if (typeof html === "string" && html.trim()) {
+				setPrintTemplate(html);
+			}
+		}
 	} catch (e) {
-		console.error("Failed to reset print template", e);
+		console.error("Failed to fetch print format template", e);
 	}
 
 	try {

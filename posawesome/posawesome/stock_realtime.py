@@ -67,6 +67,16 @@ def _flush_stock_change_queue():
     if not queue:
         return
 
+    # Evict the server-side Redis _bin_cache before broadcasting, so any client
+    # that reacts to the realtime event by re-fetching gets the fresh value
+    # instead of the stale TTL'd entry.
+    try:
+        from posawesome.posawesome.api.item_fetchers import invalidate_bin_cache
+
+        invalidate_bin_cache()
+    except Exception:
+        frappe.logger().exception("Failed to invalidate _bin_cache on stock change")
+
     items = list(queue.values())
     payload = {
         "items": items,

@@ -492,8 +492,10 @@ const handleSyncInvoices = async () => {
 		}
 		if (result.drafted) {
 			toastStore.show({
-				title: `${result.drafted} offline invoice${result.drafted > 1 ? "s" : ""} saved as draft`,
+				title: `${result.drafted} offline invoice${result.drafted > 1 ? "s" : ""} saved as DRAFT (not submitted)`,
+				detail: "Sync hit a validation error. Open the Sales Invoice list, review these drafts, and submit them manually. Original payment context is retained in the sync recovery log.",
 				color: "warning",
+				timeout: 60000,
 			});
 		}
 	}
