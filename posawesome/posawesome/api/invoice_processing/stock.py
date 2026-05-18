@@ -287,6 +287,15 @@ def _deduplicate_free_items(invoice_doc):
         unique.append(item)
 
     if len(unique) != len(items):
+        if not unique:
+            frappe.log_error(
+                title="POSAwesome: dedup would empty items",
+                message=frappe._dict(
+                    invoice=getattr(invoice_doc, "name", None),
+                    original_count=len(items),
+                ).__repr__(),
+            )
+            return
         invoice_doc.set("items", unique)
 
 
@@ -319,4 +328,19 @@ def _strip_client_freebies_from_payload(payload):
         cleaned.append(row)
 
     if modified:
+        if items and not cleaned:
+            frappe.log_error(
+                title="POSAwesome: freebie strip would empty items",
+                message=frappe._dict(
+                    invoice=payload.get("name"),
+                    original_count=len(items),
+                ).__repr__(),
+            )
+            frappe.throw(
+                _(
+                    "All items in this invoice are tagged as auto-applied freebies. "
+                    "Refusing to strip them to avoid saving an empty invoice."
+                ),
+                title=_("POSAwesome: Empty Items After Freebie Strip"),
+            )
         payload["items"] = cleaned

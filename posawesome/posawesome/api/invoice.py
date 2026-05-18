@@ -16,11 +16,38 @@ from posawesome.posawesome.doctype.pos_coupon.pos_coupon import update_coupon_co
 
 
 def validate(doc, method):
+    validate_items_present(doc)
     validate_shift(doc)
     set_patient(doc)
     auto_set_delivery_charges(doc)
     calc_delivery_charges(doc)
     apply_tax_inclusive(doc)
+
+
+def validate_items_present(doc):
+    """Block saves where totals or payments are non-zero but the items table is empty.
+
+    Why: prior incidents persisted invoices with grand_total > 0 and zero rows in the
+    item child table; rows were only recoverable from tabVersion. This guard makes the
+    impossible state unsaveable.
+    """
+    if doc.get("items"):
+        return
+
+    has_totals = any(
+        flt(doc.get(field))
+        for field in ("grand_total", "rounded_total", "total", "net_total", "base_grand_total")
+    )
+    has_payments = any(flt(p.get("amount")) for p in (doc.get("payments") or []))
+
+    if has_totals or has_payments:
+        frappe.throw(
+            _(
+                "Cannot save {0} with totals or payments but no items. "
+                "This indicates a payload error; please reload the cart and try again."
+            ).format(doc.doctype),
+            title=_("POSAwesome: Empty Items Guard"),
+        )
 
 
 def before_submit(doc, method):

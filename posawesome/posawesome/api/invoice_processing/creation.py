@@ -434,11 +434,42 @@ def _resolve_payment_amounts(payment, conversion_rate=1):
     return amount, base_amount
 
 
+def _reject_empty_items_payload(payload):
+    """Reject payloads that explicitly carry an empty items list alongside totals/payments.
+
+    Why: Frappe's Document.update() overwrites a child table when the key is present as a
+    list. A missing key is safe; an explicit empty list silently wipes items. We make the
+    impossible state (no items but money on the invoice) a loud error at the API boundary.
+    """
+    if not isinstance(payload, dict):
+        return
+
+    items = payload.get("items")
+    if items is None or items != []:
+        return
+
+    has_totals = any(
+        flt(payload.get(field))
+        for field in ("grand_total", "rounded_total", "total", "net_total", "base_grand_total")
+    )
+    has_payments = any(flt((p or {}).get("amount")) for p in (payload.get("payments") or []))
+
+    if has_totals or has_payments:
+        frappe.throw(
+            _(
+                "Refusing to save invoice: payload has totals or payments but no items. "
+                "Reload the cart and try again."
+            ),
+            title=_("POSAwesome: Empty Items Payload"),
+        )
+
+
 @frappe.whitelist()
 def update_invoice(data):
     currency_cache = {}
     data = json.loads(data)
     _sanitize_delivery_dates(data)
+    _reject_empty_items_payload(data)
     _strip_client_freebies_from_payload(data)
     # Determine doctype based on POS Profile setting
     pos_profile = data.get("pos_profile")
@@ -674,6 +705,7 @@ def submit_invoice(invoice, data, submit_in_background=False):
     invoice = json.loads(invoice)
     _sanitize_delivery_dates(invoice)
     submit_in_background = cint(submit_in_background)
+    _reject_empty_items_payload(invoice)
     _strip_client_freebies_from_payload(invoice)
     pos_profile = invoice.get("pos_profile")
     doctype = "Sales Invoice"
