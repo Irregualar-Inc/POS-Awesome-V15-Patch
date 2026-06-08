@@ -50,6 +50,60 @@ def validate_items_present(doc):
         )
 
 
+# Map an invoice doctype to its items child doctype, used by the item-loss guard.
+_ITEMS_CHILD_DOCTYPE = {
+    "Sales Invoice": "Sales Invoice Item",
+    "POS Invoice": "POS Invoice Item",
+}
+
+
+def before_update_after_submit(doc, method):
+    """Guard the *update-after-submit* path (saving an already-submitted doc).
+
+    This is the only place the "totals present but empty items" corruption can
+    occur. When a docstatus=1 document is saved, Frappe runs this path instead
+    of the normal one: validate() -- and therefore calculate_taxes_and_totals()
+    -- never fires, so the totals stay frozen, while update_child_table() still
+    deletes the orphaned item rows. The validate()-time guards
+    (validate_items_present, _reject_empty_items_payload) never run here, which
+    is why the prior prevention did not stop the incident.
+    """
+    guard_against_item_wipe(doc)
+
+
+def guard_against_item_wipe(doc):
+    """Refuse a save that would erase every item row of a submitted invoice.
+
+    Saving a submitted invoice whose in-memory items list is empty makes Frappe
+    DELETE all of its child rows. Because no recalculation happens after submit,
+    grand_total is left untouched -- producing the classic "total but no items"
+    record that is only recoverable from tabVersion.
+
+    Any legitimate post-submit edit (e.g. ERPNext's "Update Items") loads the
+    full document first, so doc.items is populated and this guard is a no-op. It
+    fires only when the items table is empty in memory while the database still
+    holds rows -- i.e. exactly the corruption we are preventing.
+    """
+    if doc.get("items"):
+        return  # items present in memory: nothing would be wiped
+
+    child_doctype = _ITEMS_CHILD_DOCTYPE.get(doc.doctype)
+    if not child_doctype or doc.is_new() or not doc.name:
+        return
+
+    db_rows = frappe.db.count(child_doctype, {"parent": doc.name})
+    if db_rows:
+        frappe.throw(
+            _(
+                "Refusing to save {0} {1}: the submitted invoice would be left with "
+                "no items while its totals stay intact, deleting the {2} item row(s) "
+                "currently stored. Reload the document and retry. To void this "
+                "invoice, cancel it instead of clearing its items."
+            ).format(doc.doctype, doc.name, db_rows),
+            title=_("POSAwesome: Item Loss Guard"),
+        )
+
+
 def before_submit(doc, method):
     add_loyalty_point(doc)
     create_sales_order(doc)

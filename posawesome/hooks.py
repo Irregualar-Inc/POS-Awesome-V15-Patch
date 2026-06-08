@@ -111,11 +111,13 @@ doc_events = {
     "Sales Invoice": {
         "validate": "posawesome.posawesome.api.invoice.validate",
         "before_submit": "posawesome.posawesome.api.invoice.before_submit",
+        "before_update_after_submit": "posawesome.posawesome.api.invoice.before_update_after_submit",
         "before_cancel": "posawesome.posawesome.api.invoice.before_cancel",
     },
     "POS Invoice": {
         "validate": "posawesome.posawesome.api.invoice.validate",
         "before_submit": "posawesome.posawesome.api.invoice.before_submit",
+        "before_update_after_submit": "posawesome.posawesome.api.invoice.before_update_after_submit",
         "before_cancel": "posawesome.posawesome.api.invoice.before_cancel",
     },
     "Customer": {
@@ -130,6 +132,15 @@ doc_events = {
 
 # Scheduled Tasks
 # ---------------
+
+scheduler_events = {
+    "hourly": [
+        # Detective control for the "totals present but empty items" bug.
+        # Backstops the before_update_after_submit guard by catching anything
+        # that bypasses the ORM (raw SQL, db.set_value, ignore_validate, manual ops).
+        "posawesome.posawesome.integrity_audit.audit_empty_items_invoices",
+    ],
+}
 
 # scheduler_events = {
 # 	"all": [
